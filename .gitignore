@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+*.o
+*.so
+*.dylib
+.DS_Store
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+dist/
+build/
+
+# Frontend
+.next/
+out/
+.cache/
