@@ -2,7 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import calculator, suggestions, reports
 from services.ml_service import initialize_models, get_model_status
+from v2.routes.v2_router import router as v2_router
+from models.db_models import create_tables
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,18 +25,30 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # Initialize ML models on startup
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Starting CarbonSense API...")
+    # Create database tables on startup
+    try:
+        create_tables()
+        logger.info("✅ Database tables created/verified")
+    except Exception as e:
+        logger.warning(f"⚠️ Database initialization: {e}")
     initialize_models()
     logger.info("✅ CarbonSense API started successfully!")
 
+# Include existing routes
 app.include_router(calculator.router)
 app.include_router(suggestions.router)
 app.include_router(reports.router)
+
+# Include v2 routes (new features with feature flags)
+app.include_router(v2_router)
 
 @app.get("/")
 def root():

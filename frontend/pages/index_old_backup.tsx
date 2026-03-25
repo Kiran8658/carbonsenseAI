@@ -45,7 +45,7 @@ export default function Home() {
       setEmissionData(res.data);
     } catch (e) {
       console.error(e);
-      alert("Could not connect to backend. Make sure FastAPI is running on port 8000.");
+      alert("Could not connect to backend. Make sure FastAPI is running on port 8005.");
     } finally {
       setCalcLoading(false);
     }
@@ -305,9 +305,8 @@ export default function Home() {
             />
 
             <Simulator
-              electricity_kwh={inputs.electricity}
-              fuel_litres={inputs.fuel}
-              initialTotal={emissionData?.total_co2 ?? 0}
+              electricityKwh={inputs.electricity}
+              fuelLitres={inputs.fuel}
             />
           </div>
 

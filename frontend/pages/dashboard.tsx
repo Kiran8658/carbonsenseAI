@@ -21,27 +21,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [backendStatus, setBackendStatus] = useState<"online" | "offline">("offline");
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await axios.get("http://localhost:8000/health");
-        setBackendStatus("online");
-
-        const dashboardResponse = await axios.get("http://localhost:8000/api/dashboard");
-        setData(dashboardResponse.data);
-        setLoading(false);
-      } catch (error) {
-        setBackendStatus("offline");
-        setLoading(false);
-        console.error("Error fetching data:", error);
-      }
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
   // Mock data for development
   const mockData: DashboardData = {
     totalEmissions: 2456.8,
@@ -68,6 +47,29 @@ export default function Dashboard() {
       { id: "4", source: "Waste Management", type: "Disposal", value: "89.5", date: "3 days ago" },
     ],
   };
+
+  useEffect(() => {
+    const checkBackendConnection = async () => {
+      try {
+        const response = await axios.get("http://localhost:8005/health", {
+          timeout: 5000,
+        });
+        if (response.status === 200) {
+          setBackendStatus("online");
+        }
+      } catch (error) {
+        setBackendStatus("offline");
+        console.log("Backend is offline, using mock data");
+      } finally {
+        setData(mockData);
+        setLoading(false);
+      }
+    };
+
+    checkBackendConnection();
+    const interval = setInterval(checkBackendConnection, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const displayData = data || mockData;
 

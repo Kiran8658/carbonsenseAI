@@ -3,6 +3,10 @@ import axios from "axios";
 import Sidebar from "../components/Sidebar";
 import { Activity, Zap, Fuel, AlertCircle, Lightbulb, Calculator } from "lucide-react";
 
+const API_URL = typeof window !== "undefined"
+  ? `http://${window.location.hostname}:8005`
+  : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8005");
+
 interface EmissionData {
   total_co2: number;
   electricity_co2: number;
@@ -29,7 +33,7 @@ export default function EmissionsPage() {
 
   const checkBackendStatus = async () => {
     try {
-      const response = await axios.get("http://localhost:8000/health", { timeout: 3000 });
+      const response = await axios.get(`${API_URL}/health`, { timeout: 3000 });
       setBackendConnected(!!response.data);
     } catch (error) {
       setBackendConnected(false);
@@ -39,11 +43,11 @@ export default function EmissionsPage() {
   const handleCalculate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!electricity || !fuel) return;
-    if (!backendConnected) { alert("Backend not connected! Start server on port 8000."); return; }
+    if (!backendConnected) { alert("Backend not connected! Start server on port 8005."); return; }
 
     setLoading(true);
     try {
-      const response = await axios.post("http://localhost:8000/api/calculate", {
+      const response = await axios.post(`${API_URL}/api/calculate`, {
         electricity_kwh: parseFloat(electricity), fuel_litres: parseFloat(fuel),
       });
       if (response.data?.data) setEmissionData(response.data.data);
@@ -56,7 +60,7 @@ export default function EmissionsPage() {
     if (!emissionData || !backendConnected) return;
     setAiLoading(true);
     try {
-      const response = await axios.post("http://localhost:8000/api/reports/ai-insights", {
+      const response = await axios.post(`${API_URL}/api/reports/ai-insights`, {
         emission_data: emissionData, suggestions: [], history: [], forecast: [],
       });
       if (response.data.success) setAiInsights(response.data);

@@ -1,276 +1,167 @@
-import { useState, useEffect } from "react";
-import { SlidersHorizontal, Loader2, TrendingDown } from "lucide-react";
-import { simulateReduction } from "../../lib/api";
-import { SimulatorResult, ModelConnectionStatus } from "../../lib/types";
-import ConnectionLight from "../ui/ConnectionLight";
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { Sliders, TrendingDown, TreePine, Home, Zap, Fuel } from "lucide-react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8004";
 
 interface SimulatorProps {
-  electricity_kwh: number;
-  fuel_litres: number;
-  initialTotal: number;
-  model1Status?: ModelConnectionStatus;
+  electricityKwh: number;
+  fuelLitres: number;
 }
 
-export default function Simulator({ electricity_kwh, fuel_litres, initialTotal, model1Status = "disconnected" }: SimulatorProps) {
-  const [elecPct, setElecPct] = useState(0);
-  const [fuelPct, setFuelPct] = useState(0);
-  const [result, setResult] = useState<SimulatorResult | null>(null);
-  const [loading, setLoading] = useState(false);
+interface SimResult {
+  before_co2: number;
+  after_co2: number;
+  savings_co2: number;
+  savings_percentage: number;
+  electricity_before: number;
+  electricity_after: number;
+  fuel_before: number;
+  fuel_after: number;
+  yearly_co2_savings?: number;
+  yearly_cost_savings_inr?: number;
+  trees_equivalent?: number;
+  homes_powered_equivalent?: number;
+}
 
-  const runSimulation = async () => {
-    if (!electricity_kwh || !fuel_litres) return;
+export default function Simulator({ electricityKwh, fuelLitres }: SimulatorProps) {
+  const [elecPct, setElecPct] = useState(20);
+  const [fuelPct, setFuelPct] = useState(15);
+  const [result, setResult] = useState<SimResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  const handleSimulate = async () => {
+    if (!electricityKwh && !fuelLitres) return;
     setLoading(true);
     try {
-      const data = await simulateReduction({
-        electricity_kwh,
-        fuel_litres,
+      const r = await axios.post(`${API_URL}/api/simulate`, {
+        electricity_kwh: electricityKwh,
+        fuel_litres: fuelLitres,
         electricity_reduction_pct: elecPct,
         fuel_reduction_pct: fuelPct,
       });
-      setResult(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+      setResult(r.data);
+      setMounted(false);
+      setTimeout(() => setMounted(true), 50);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
-  // Auto-run whenever sliders change
-  useEffect(() => {
-    if (electricity_kwh > 0 && fuel_litres > 0) {
-      const timer = setTimeout(runSimulation, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [elecPct, fuelPct, electricity_kwh, fuel_litres]);
-
-  const beforeTotal = result?.before_co2 ?? initialTotal;
-  const afterTotal = result?.after_co2 ?? initialTotal;
-  const savingsPct = result?.savings_percentage ?? 0;
-
-  const barWidth = beforeTotal > 0 ? (afterTotal / beforeTotal) * 100 : 100;
-
   return (
-    <div className="card" style={{ padding: "28px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <SlidersHorizontal size={18} color="var(--green-primary)" />
-        <h2
-          style={{
-            fontFamily: "Syne, sans-serif",
-            fontSize: 18,
-            fontWeight: 700,
-            color: "var(--text-primary)",
-          }}
-        >
-          Emission Simulator
-        </h2>
-      </div>
-      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 28 }}>
-        Drag sliders to see the impact of reducing energy consumption
-      </p>
-      <div style={{ marginBottom: 16 }}>
-        <ConnectionLight status={model1Status} label="Simulation Engine" compact />
+    <div className="card p-6">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+          style={{ background: "rgba(139,92,246,0.15)" }}>
+          <Sliders size={18} className="text-purple-400" />
+        </div>
+        <div>
+          <h2 style={{ fontFamily: "Syne", fontSize: 17, color: "var(--text-primary)" }}>Emission Simulator</h2>
+          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Model yearly impact of reduction strategies</p>
+        </div>
       </div>
 
       {/* Sliders */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 24, marginBottom: 28 }}>
-        {/* Electricity slider */}
+      <div className="space-y-5 mb-6">
         <div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <label
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: "Syne, sans-serif",
-                color: "#f59e0b",
-              }}
-            >
-              ⚡ Electricity Reduction
+          <div className="flex justify-between mb-2">
+            <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
+              <Zap size={13} className="text-blue-400" /> Electricity Reduction
             </label>
-            <span
-              style={{
-                fontFamily: "DM Mono, monospace",
-                fontSize: 15,
-                fontWeight: 600,
-                color: "#f59e0b",
-              }}
-            >
-              {elecPct}%
-            </span>
+            <span style={{ fontFamily: "DM Mono", fontSize: 14, color: "#3b82f6" }}>{elecPct}%</span>
           </div>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={elecPct}
-            onChange={(e) => setElecPct(Number(e.target.value))}
-            className="cs-slider"
-            style={{
-              background: `linear-gradient(to right, #f59e0b ${elecPct}%, var(--border) ${elecPct}%)`,
-            } as React.CSSProperties}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "DM Mono, monospace" }}>0%</span>
-            <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "DM Mono, monospace" }}>100%</span>
-          </div>
+          <input type="range" min={0} max={80} value={elecPct}
+            onChange={e => setElecPct(+e.target.value)} className="cs-slider" />
         </div>
-
-        {/* Fuel slider */}
         <div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <label
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: "Syne, sans-serif",
-                color: "#3b82f6",
-              }}
-            >
-              ⛽ Fuel Reduction
+          <div className="flex justify-between mb-2">
+            <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
+              <Fuel size={13} className="text-orange-400" /> Fuel Reduction
             </label>
-            <span
-              style={{
-                fontFamily: "DM Mono, monospace",
-                fontSize: 15,
-                fontWeight: 600,
-                color: "#3b82f6",
-              }}
-            >
-              {fuelPct}%
-            </span>
+            <span style={{ fontFamily: "DM Mono", fontSize: 14, color: "#f97316" }}>{fuelPct}%</span>
           </div>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={fuelPct}
-            onChange={(e) => setFuelPct(Number(e.target.value))}
-            className="cs-slider"
-            style={{
-              background: `linear-gradient(to right, #3b82f6 ${fuelPct}%, var(--border) ${fuelPct}%)`,
-            } as React.CSSProperties}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "DM Mono, monospace" }}>0%</span>
-            <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "DM Mono, monospace" }}>100%</span>
-          </div>
+          <input type="range" min={0} max={80} value={fuelPct}
+            onChange={e => setFuelPct(+e.target.value)} className="cs-slider" />
         </div>
       </div>
 
-      {/* Before vs After */}
-      <div
-        style={{
-          background: "#0d1826",
-          border: "1px solid var(--border)",
-          borderRadius: 14,
-          padding: "20px",
-        }}
-      >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "center", marginBottom: 20 }}>
-          {/* Before */}
-          <div style={{ textAlign: "center" }}>
-            <p style={{ fontSize: 11, fontFamily: "Syne, sans-serif", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
-              Before
+      <button onClick={handleSimulate} disabled={loading || (!electricityKwh && !fuelLitres)}
+        className="btn-primary w-full flex items-center justify-center gap-2 mb-6">
+        {loading ? "Simulating..." : <><TrendingDown size={16} /> Simulate Impact</>}
+      </button>
+
+      {result && (
+        <div className={mounted ? "slide-in" : ""}>
+          {/* Before / After */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            {[
+              { label: "Before", val: result.before_co2.toFixed(1), color: "#ef4444" },
+              { label: "After",  val: result.after_co2.toFixed(1),  color: "#22c55e" },
+            ].map(({ label, val, color }) => (
+              <div key={label} className="rounded-xl p-4"
+                style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${color}30` }}>
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{label}</p>
+                <p style={{ fontFamily: "DM Mono", fontSize: 22, fontWeight: 700, color }}>{val} kg</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Savings badge */}
+          <div className="rounded-xl p-4 mb-4 text-center"
+            style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)" }}>
+            <p style={{ fontSize: 28, fontWeight: 800, color: "#22c55e", fontFamily: "DM Mono" }}>
+              -{result.savings_percentage.toFixed(1)}%
             </p>
-            <p
-              style={{
-                fontSize: 28,
-                fontWeight: 800,
-                fontFamily: "Syne, sans-serif",
-                color: "#ef4444",
-                lineHeight: 1,
-              }}
-            >
-              {beforeTotal.toFixed(0)}
-            </p>
-            <p style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "DM Mono, monospace", marginTop: 2 }}>
-              kg CO₂
+            <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+              You save {result.savings_co2.toFixed(1)} kg CO₂/month
             </p>
           </div>
 
-          {/* Arrow */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <TrendingDown size={22} color="#22c55e" />
-          </div>
-
-          {/* After */}
-          <div style={{ textAlign: "center" }}>
-            <p style={{ fontSize: 11, fontFamily: "Syne, sans-serif", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
-              After
-            </p>
-            <p
-              style={{
-                fontSize: 28,
-                fontWeight: 800,
-                fontFamily: "Syne, sans-serif",
-                color: "#22c55e",
-                lineHeight: 1,
-              }}
-            >
-              {loading ? "..." : afterTotal.toFixed(0)}
-            </p>
-            <p style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "DM Mono, monospace", marginTop: 2 }}>
-              kg CO₂
-            </p>
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div style={{ marginBottom: 12 }}>
-          <div
-            style={{
-              height: 10,
-              background: "var(--border)",
-              borderRadius: 5,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${barWidth}%`,
-                height: "100%",
-                background: savingsPct > 30 ? "#22c55e" : savingsPct > 15 ? "#f59e0b" : "#3b82f6",
-                borderRadius: 5,
-                transition: "width 0.4s ease",
-                boxShadow: "0 0 8px rgba(34,197,94,0.4)",
-              }}
-            />
+          {/* Yearly impact */}
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              {
+                icon: <TrendingDown size={16} className="text-green-400" />,
+                label: "Yearly CO₂ Saved",
+                val: result.yearly_co2_savings ? `${result.yearly_co2_savings.toFixed(0)} kg` : `${(result.savings_co2 * 12).toFixed(0)} kg`,
+                color: "#22c55e"
+              },
+              {
+                icon: <span style={{ fontSize: 14 }}>₹</span>,
+                label: "Yearly Cost Savings",
+                val: result.yearly_cost_savings_inr
+                  ? `₹${result.yearly_cost_savings_inr.toLocaleString("en-IN")}`
+                  : "—",
+                color: "#f59e0b"
+              },
+              {
+                icon: <TreePine size={16} className="text-emerald-400" />,
+                label: "Trees Equivalent",
+                val: result.trees_equivalent ? `${result.trees_equivalent} trees` : "—",
+                color: "#34d399"
+              },
+              {
+                icon: <Home size={16} className="text-blue-400" />,
+                label: "Homes Powered",
+                val: result.homes_powered_equivalent
+                  ? `${result.homes_powered_equivalent.toFixed(1)} homes`
+                  : "—",
+                color: "#60a5fa"
+              },
+            ].map(({ icon, label, val, color }) => (
+              <div key={label} className="rounded-lg p-3"
+                style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)" }}>
+                <div className="flex items-center gap-2 mb-1">
+                  {icon}
+                  <p style={{ fontSize: 10, color: "var(--text-muted)" }}>{label}</p>
+                </div>
+                <p style={{ fontFamily: "DM Mono", fontSize: 14, fontWeight: 700, color }}>{val}</p>
+              </div>
+            ))}
           </div>
         </div>
-
-        {/* Savings */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-            CO₂ savings:{" "}
-            <strong style={{ color: "#22c55e", fontFamily: "DM Mono, monospace" }}>
-              {result ? `-${result.savings_co2.toFixed(1)} kg` : "0 kg"}
-            </strong>
-          </span>
-          <div
-            style={{
-              background: "#22c55e15",
-              border: "1px solid #22c55e33",
-              borderRadius: 8,
-              padding: "4px 14px",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "Syne, sans-serif",
-                fontWeight: 800,
-                fontSize: 18,
-                color: "#22c55e",
-              }}
-            >
-              -{savingsPct.toFixed(1)}%
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {!electricity_kwh && (
-        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 16, textAlign: "center" }}>
-          ↑ Calculate your emissions first to activate the simulator
-        </p>
       )}
     </div>
   );

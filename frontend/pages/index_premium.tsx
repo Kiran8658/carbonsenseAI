@@ -24,10 +24,10 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await axios.get('http://localhost:8000/health');
+        const response = await axios.get('http://localhost:8005/health');
         setBackendStatus('online');
 
-        const dashboardResponse = await axios.get('http://localhost:8000/api/dashboard');
+        const dashboardResponse = await axios.get('http://localhost:8005/api/dashboard');
         setData(dashboardResponse.data);
         setLoading(false);
       } catch (error) {

@@ -1,19 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import Sidebar from "../components/Sidebar";
-import { 
-  Activity, 
-  Zap, 
-  Fuel, 
-  AlertCircle, 
-  Lightbulb, 
-  TrendingUp,
-  TrendingDown,
-  Calculator,
-  BarChart3,
-  Leaf,
-  Sparkles
+import {
+  Activity, Zap, Fuel, Lightbulb, TrendingUp, TrendingDown,
+  Calculator, BarChart3, Leaf, Sparkles, Award, DollarSign,
+  Shield, Target, ChevronRight, RefreshCw, Download, TreePine
 } from "lucide-react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8005";
 
 interface EmissionData {
   total_co2: number;
@@ -21,473 +15,651 @@ interface EmissionData {
   fuel_co2: number;
   carbon_score: string;
   carbon_score_value: number;
-  breakdown_percentage: {
-    electricity: number;
-    fuel: number;
+  breakdown_percentage: { electricity: number; fuel: number };
+  confidence_score?: number;
+  prediction_range?: { low: number; high: number };
+  industry_benchmark?: {
+    sector: string; avg_monthly_co2: number; your_co2: number;
+    percentile: number; is_above_average: boolean;
+    reduction_to_average: number; rating: string;
+    p25_benchmark: number; p75_benchmark: number;
   };
+  cost_savings?: {
+    current_monthly_cost_inr: number; electricity_cost_inr: number;
+    fuel_cost_inr: number; potential_monthly_savings_inr: number;
+    annual_savings_inr: number; savings_from_efficiency_pct: number;
+  };
+  ml_model_used?: string;
+  data_quality_flags?: string[];
 }
 
-interface ModelStatus {
-  emissions_model: string;
-  scorer_model: string;
-  trend_model: string;
+// ── Animated Score Ring ───────────────────────────────────────────────────────
+function ScoreRing({ value, label, color }: { value: number; label: string; color: string }) {
+  const [displayVal, setDisplayVal] = useState(0);
+  const radius = 54;
+  const circ   = 2 * Math.PI * radius;
+  const offset = circ - (displayVal / 100) * circ;
+
+  useEffect(() => {
+    let start = 0;
+    const step = value / 60;
+    const id = setInterval(() => {
+      start += step;
+      if (start >= value) { setDisplayVal(value); clearInterval(id); }
+      else setDisplayVal(Math.round(start));
+    }, 16);
+    return () => clearInterval(id);
+  }, [value]);
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="relative" style={{ width: 140, height: 140 }}>
+        {/* Pulsing outer ring */}
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            background: `radial-gradient(circle, ${color}18 0%, transparent 70%)`,
+            animation: "breathe-glow 2.5s ease-in-out infinite",
+          }}
+        />
+        <svg width="140" height="140" className="score-breathe">
+          <defs>
+            <linearGradient id="scoreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.05} />
+            </linearGradient>
+          </defs>
+          {/* Background track */}
+          <circle cx="70" cy="70" r={radius} fill="url(#scoreGrad)"
+            stroke="var(--border)" strokeWidth="10" />
+          {/* Animated filled arc */}
+          <circle
+            className="score-ring"
+            cx="70" cy="70" r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={circ}
+            strokeDashoffset={offset}
+            transform="rotate(-90 70 70)"
+            style={{ filter: `drop-shadow(0 0 8px ${color})` }}
+          />
+          {/* Centre text */}
+          <text x="70" y="65" textAnchor="middle"
+            style={{ fontFamily: "DM Mono", fontSize: 26, fontWeight: 700, fill: color }}>
+            {displayVal}
+          </text>
+          <text x="70" y="82" textAnchor="middle"
+            style={{ fontFamily: "Syne", fontSize: 10, fill: "var(--text-muted)", letterSpacing: 1 }}>
+            /100
+          </text>
+        </svg>
+        {/* Orbiting dot */}
+        <div style={{
+          position: "absolute", top: 0, left: 0, width: "100%", height: "100%",
+          animation: "orbit 4s linear infinite",
+          transformOrigin: "50% 50%",
+        }}>
+          <div style={{
+            position: "absolute", top: 4, left: "50%", marginLeft: -4,
+            width: 8, height: 8, borderRadius: "50%",
+            background: color, boxShadow: `0 0 8px ${color}`,
+          }} />
+        </div>
+      </div>
+      <span className="text-lg font-bold" style={{ color, fontFamily: "Syne" }}>{label}</span>
+    </div>
+  );
 }
 
+// ── Animated Counter ──────────────────────────────────────────────────────────
+function AnimatedNumber({ value, decimals = 1, suffix = "" }: { value: number; decimals?: number; suffix?: string }) {
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    let start = 0;
+    const duration = 900;
+    const steps = 50;
+    const increment = value / steps;
+    const interval = duration / steps;
+    const id = setInterval(() => {
+      start += increment;
+      if (start >= value) { setDisplay(value); clearInterval(id); }
+      else setDisplay(start);
+    }, interval);
+    return () => clearInterval(id);
+  }, [value]);
+  return <span className="ticker-value">{display.toFixed(decimals)}{suffix}</span>;
+}
+
+// ── Industry Benchmark Bar ────────────────────────────────────────────────────
+function BenchmarkBar({ benchmark }: { benchmark: NonNullable<EmissionData["industry_benchmark"]> }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setTimeout(() => setMounted(true), 300); }, []);
+
+  const maxVal  = benchmark.p75_benchmark * 1.2;
+  const userPct = Math.min(100, (benchmark.your_co2      / maxVal) * 100);
+  const avgPct  = Math.min(100, (benchmark.avg_monthly_co2 / maxVal) * 100);
+  const isGood  = !benchmark.is_above_average;
+
+  return (
+    <div className="card p-5 slide-in slide-in-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+            style={{ background: "rgba(139,92,246,0.15)" }}>
+            <Target size={18} className="text-purple-400" />
+          </div>
+          <div>
+            <h3 style={{ fontFamily: "Syne", fontSize: 14, color: "var(--text-primary)" }}>
+              Industry Benchmark
+            </h3>
+            <p style={{ fontSize: 11, color: "var(--text-muted)" }}>{benchmark.sector}</p>
+          </div>
+        </div>
+        <span
+          className="badge"
+          style={{
+            background: isGood ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
+            color: isGood ? "var(--green-primary)" : "var(--red)",
+            border: `1px solid ${isGood ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+          }}
+        >
+          {benchmark.percentile.toFixed(0)}th %ile
+        </span>
+      </div>
+
+      {/* You vs average */}
+      <div className="space-y-3">
+        <div>
+          <div className="flex justify-between text-xs mb-1"
+            style={{ color: "var(--text-muted)", fontFamily: "DM Mono" }}>
+            <span>You</span>
+            <span style={{ color: isGood ? "#22c55e" : "#ef4444" }}>
+              {benchmark.your_co2.toFixed(0)} kg
+            </span>
+          </div>
+          <div className="benchmark-bar">
+            <div
+              className="benchmark-fill"
+              style={{
+                width: mounted ? `${userPct}%` : "0%",
+                background: isGood
+                  ? "linear-gradient(90deg,#22c55e,#4ade80)"
+                  : "linear-gradient(90deg,#ef4444,#f87171)",
+              }}
+            />
+          </div>
+        </div>
+        <div>
+          <div className="flex justify-between text-xs mb-1"
+            style={{ color: "var(--text-muted)", fontFamily: "DM Mono" }}>
+            <span>Sector Average</span>
+            <span>{benchmark.avg_monthly_co2.toFixed(0)} kg</span>
+          </div>
+          <div className="benchmark-bar">
+            <div
+              className="benchmark-fill"
+              style={{
+                width: mounted ? `${avgPct}%` : "0%",
+                background: "linear-gradient(90deg,#3b82f6,#60a5fa)",
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
+        {benchmark.rating}
+        {benchmark.is_above_average && benchmark.reduction_to_average > 0 && (
+          <span style={{ color: "#f59e0b" }}>
+            {" — "}Reduce by {benchmark.reduction_to_average.toFixed(0)} kg to reach average
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+// ── Cost Savings Card ─────────────────────────────────────────────────────────
+function CostSavingsCard({ cost }: { cost: NonNullable<EmissionData["cost_savings"]> }) {
+  return (
+    <div className="card p-5 slide-in slide-in-4">
+      <div className="flex items-center gap-2 mb-4">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+          style={{ background: "rgba(245,158,11,0.15)" }}>
+          <DollarSign size={18} className="text-amber-400" />
+        </div>
+        <div>
+          <h3 style={{ fontFamily: "Syne", fontSize: 14, color: "var(--text-primary)" }}>
+            Cost Analysis
+          </h3>
+          <p style={{ fontSize: 11, color: "var(--text-muted)" }}>at 20% efficiency gain</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: "Monthly Cost", val: `₹${cost.current_monthly_cost_inr.toLocaleString("en-IN")}`, color: "var(--text-secondary)" },
+          { label: "Monthly Savings", val: `₹${cost.potential_monthly_savings_inr.toLocaleString("en-IN")}`, color: "#22c55e" },
+          { label: "Annual Savings", val: `₹${cost.annual_savings_inr.toLocaleString("en-IN")}`, color: "#f59e0b" },
+          { label: "Electricity Cost", val: `₹${cost.electricity_cost_inr.toLocaleString("en-IN")}`, color: "#3b82f6" },
+        ].map(({ label, val, color }) => (
+          <div key={label} className="rounded-lg p-3" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)" }}>
+            <p style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>{label}</p>
+            <p style={{ fontFamily: "DM Mono", fontSize: 13, fontWeight: 600, color }}>{val}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const [electricity, setElectricity] = useState("");
   const [fuel, setFuel] = useState("");
+  const [sector, setSector] = useState("General MSME");
+  const [sectors, setSectors] = useState<string[]>([]);
   const [emissionData, setEmissionData] = useState<EmissionData | null>(null);
-  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiInsights, setAiInsights] = useState<any>(null);
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
+  const [aiInsights, setAiInsights] = useState<any>(null);
+  const [dataKey, setDataKey] = useState(0); // force re-animation
 
-  useEffect(() => {
-    checkBackendStatus();
-    const interval = setInterval(checkBackendStatus, 5000);
-    return () => clearInterval(interval);
+  const scoreColor = {
+    Excellent: "#22c55e", Good: "#84cc16",
+    Average: "#f59e0b", Poor: "#f97316", Critical: "#ef4444",
+  };
+
+  const checkBackend = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API_URL}/health`, { timeout: 3000 });
+      setBackendConnected(true);
+    } catch { setBackendConnected(false); }
   }, []);
 
-  // Auto-refresh data every 4 seconds when backend is connected and data exists
   useEffect(() => {
-    if (!backendConnected || !electricity || !fuel) return;
-    
-    const refreshInterval = setInterval(() => {
-      refreshData();
-    }, 4000);
-    
-    return () => clearInterval(refreshInterval);
-  }, [backendConnected, electricity, fuel]);
+    checkBackend();
+    const id = setInterval(checkBackend, 8000);
+    return () => clearInterval(id);
+  }, [checkBackend]);
 
-  const refreshData = async () => {
-    if (!electricity || !fuel) return;
-    try {
-      const response = await axios.post("http://localhost:8000/api/calculate", {
-        electricity_kwh: parseFloat(electricity),
-        fuel_litres: parseFloat(fuel),
-      });
-      if (response.data?.data) {
-        setEmissionData(response.data.data);
-        fetchAISuggestions(response.data.data);
-      }
-    } catch (error) {
-      console.error("Auto-refresh error:", error);
-    }
-  };
-
-  const checkBackendStatus = async () => {
-    try {
-      const response = await axios.get("http://localhost:8000/health", { timeout: 3000 });
-      if (response.data) {
-        setBackendConnected(true);
-        setModelStatus(response.data.models);
-      }
-    } catch (error) {
-      setBackendConnected(false);
-      setModelStatus(null);
-    }
-  };
+  useEffect(() => {
+    axios.get(`${API_URL}/api/sectors`).then(r => {
+      if (r.data?.sectors) setSectors(r.data.sectors);
+    }).catch(() => {});
+  }, []);
 
   const handleCalculate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!electricity || !fuel) return;
-
-    if (!backendConnected) {
-      alert("Backend is not connected! Please start the backend server on port 8000.");
-      return;
-    }
-
+    if (!electricity || !fuel || !backendConnected) return;
     setLoading(true);
     try {
-      const response = await axios.post("http://localhost:8000/api/calculate", {
+      const r = await axios.post(`${API_URL}/api/calculate`, {
         electricity_kwh: parseFloat(electricity),
-        fuel_litres: parseFloat(fuel),
+        fuel_litres:     parseFloat(fuel),
+        industry_sector: sector,
       });
-      
-      if (response.data && response.data.data) {
-        setEmissionData(response.data.data);
-        // Automatically fetch AI suggestions after calculation
-        fetchAISuggestions(response.data.data);
+      if (r.data?.data) {
+        setEmissionData(r.data.data);
+        setDataKey(k => k + 1);
+        fetchAISuggestions(r.data.data);
       }
-    } catch (error) {
-      console.error("Error calculating emissions:", error);
-      alert("Failed to calculate. Please check backend connection.");
-    } finally {
-      setLoading(false);
-    }
+    } catch { alert("Failed to calculate — check backend connection."); }
+    finally { setLoading(false); }
   };
 
   const fetchAISuggestions = async (data: EmissionData) => {
     try {
-      const response = await axios.post("http://localhost:8000/api/ai-suggestions", {
+      const r = await axios.post(`${API_URL}/api/ai-suggestions`, {
         electricity_kwh: parseFloat(electricity),
-        fuel_litres: parseFloat(fuel),
-        total_co2: data.total_co2,
-        business_type: "MSME"
+        fuel_litres:     parseFloat(fuel),
+        total_co2:       data.total_co2,
+        business_type:   sector || "General MSME",
+        industry_sector: sector,
       });
-      
-      if (response.data && response.data.suggestions) {
-        setAiSuggestions(response.data.suggestions);
-      }
-    } catch (error) {
-      console.error("Error fetching AI suggestions:", error);
-    }
+      if (r.data?.suggestions) setAiSuggestions(r.data.suggestions);
+    } catch {}
   };
 
   const generateAIInsights = async () => {
-    if (!emissionData || !backendConnected) {
-      alert("Please calculate emissions first and ensure backend is connected.");
-      return;
-    }
-    
+    if (!emissionData || !backendConnected) return;
+    setAiLoading(true);
     try {
-      setAiLoading(true);
-      const response = await axios.post("http://localhost:8000/api/reports/ai-insights", {
-        emission_data: emissionData,
-        suggestions: aiSuggestions,
-        history: [],
-        forecast: [],
+      const r = await axios.post(`${API_URL}/api/reports/ai-insights`, {
+        emission_data: emissionData, suggestions: aiSuggestions, history: [], forecast: [],
       });
-      
-      if (response.data.success) {
-        setAiInsights(response.data);
-      }
-    } catch (error) {
-      console.error("Error generating AI insights:", error);
-    } finally {
-      setAiLoading(false);
-    }
+      if (r.data) setAiInsights(r.data);
+    } catch {}
+    finally { setAiLoading(false); }
   };
 
-  const getScoreColor = (score: string) => {
-    switch (score) {
-      case "Excellent": return "#22c55e";
-      case "Good": return "#84cc16";
-      case "Average": return "#eab308";
-      case "Poor": return "#f97316";
-      default: return "#ef4444";
-    }
-  };
-
-  const getModelStatusColor = (status: string) => {
-    switch (status) {
-      case "loaded": return "bg-green-500";
-      case "loading": return "bg-yellow-500";
-      case "error": return "bg-red-500";
-      default: return "bg-gray-500";
-    }
-  };
+  const currentScore  = emissionData?.carbon_score ?? "Average";
+  const currentColor  = (scoreColor as any)[currentScore] ?? "#f59e0b";
+  const confidence    = emissionData?.confidence_score ?? 0;
+  const confPct       = Math.round(confidence * 100);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen grid-bg" style={{ background: "var(--bg-primary)" }}>
       <Sidebar />
 
-      <main className="ml-64 p-8 space-y-8">
-        {/* Header */}
+      <main className="ml-64 p-8 space-y-7">
+        {/* ── Header ────────────────────────────────────── */}
         <div className="flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-4xl font-bold text-white tracking-tight">Dashboard</h1>
-              <div className="flex items-center gap-2 px-3 py-1 bg-[#c8f07a]/20 rounded-full border border-[#c8f07a]/30">
-                <Sparkles size={14} className="text-[#c8f07a]" />
-                <span className="text-xs font-semibold text-[#c8f07a]">3 AI Models</span>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-4xl font-bold gradient-text">Dashboard</h1>
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full"
+                style={{ background: "rgba(200,240,122,0.12)", border: "1px solid rgba(200,240,122,0.25)" }}>
+                <Sparkles size={13} style={{ color: "#c8f07a" }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#c8f07a", fontFamily: "Syne", letterSpacing: 1 }}>
+                  ML PIPELINE v2
+                </span>
+              </div>
+              {/* Live dot */}
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full live-blink" style={{ background: "#22c55e" }} />
+                <span style={{ fontSize: 11, color: "#22c55e", fontFamily: "DM Mono" }}>LIVE</span>
               </div>
             </div>
-            <p className="text-[#888888]">
-              Real-time carbon emissions tracking with AI-powered insights
+            <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
+              Real-time carbon tracking · Ensemble ML · Industry Benchmarks · ESG Insights
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${backendConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-            <span className={`text-sm ${backendConnected ? 'text-green-400' : 'text-red-400'}`}>
-              {backendConnected ? 'Backend Connected' : 'Backend Disconnected'}
-            </span>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+              <div className={`w-2.5 h-2.5 rounded-full ${backendConnected ? "status-connected" : ""}`}
+                style={{ background: backendConnected ? "#22c55e" : "#ef4444" }} />
+              <span style={{ fontSize: 12, color: backendConnected ? "#22c55e" : "#ef4444", fontFamily: "DM Mono" }}>
+                {backendConnected ? "Backend ✓" : "Backend ✗"}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* AI Model Status */}
-        {modelStatus && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-4 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${getModelStatusColor(modelStatus.emissions_model)}`} />
-              <div>
-                <p className="text-white font-medium text-sm">Emissions Predictor</p>
-                <p className="text-[#666666] text-xs">Model 1 • {modelStatus.emissions_model}</p>
-              </div>
-            </div>
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-4 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${getModelStatusColor(modelStatus.scorer_model)}`} />
-              <div>
-                <p className="text-white font-medium text-sm">Carbon Scorer</p>
-                <p className="text-[#666666] text-xs">Model 2 • {modelStatus.scorer_model}</p>
-              </div>
-            </div>
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-4 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${getModelStatusColor(modelStatus.trend_model)}`} />
-              <div>
-                <p className="text-white font-medium text-sm">Trend Forecaster</p>
-                <p className="text-[#666666] text-xs">Model 3 • {modelStatus.trend_model}</p>
-              </div>
-            </div>
+        {/* ── Input Form ────────────────────────────────── */}
+        <div className="card p-6">
+          <div className="flex items-center gap-2 mb-5">
+            <Calculator size={18} style={{ color: "#c8f07a" }} />
+            <h2 style={{ fontFamily: "Syne", fontSize: 17, color: "var(--text-primary)" }}>Data Input</h2>
+            <span className="ml-auto text-xs" style={{ color: "var(--text-muted)", fontFamily: "DM Mono" }}>
+              {/* Emission factors */}
+              Elec: 0.82 kg/kWh · Diesel: 2.3 kg/L
+            </span>
           </div>
-        )}
 
-        {/* Input Form */}
-        <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-          <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-            <Calculator size={20} className="text-[#c8f07a]" />
-            Data Input
-          </h2>
-          
-          <form onSubmit={handleCalculate} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <form onSubmit={handleCalculate} className="grid grid-cols-1 md:grid-cols-4 gap-5">
             <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-[#888888] mb-2">
-                <Zap size={16} className="text-blue-400" />
-                Electricity Usage (kWh/month)
+              <label className="flex items-center gap-2 text-sm font-medium mb-2"
+                style={{ color: "var(--text-muted)" }}>
+                <Zap size={14} className="text-blue-400" /> Electricity (kWh/mo)
               </label>
-              <input
-                type="number"
-                value={electricity}
-                onChange={(e) => setElectricity(e.target.value)}
-                placeholder="e.g., 500"
-                className="w-full bg-[#1a1a1a] border border-[#333333] rounded-lg px-4 py-3 text-white placeholder-[#666666] focus:outline-none focus:border-[#c8f07a]"
-                required
-                min="0"
-                step="0.1"
-              />
+              <input type="number" value={electricity}
+                onChange={e => setElectricity(e.target.value)}
+                placeholder="e.g. 500" className="cs-input" min="0" step="0.1" required />
               {electricity && (
-                <p className="text-xs text-blue-400 mt-2">
+                <p className="text-xs mt-1.5" style={{ color: "#3b82f6", fontFamily: "DM Mono" }}>
                   ≈ {(parseFloat(electricity) * 0.82).toFixed(1)} kg CO₂
                 </p>
               )}
             </div>
 
             <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-[#888888] mb-2">
-                <Fuel size={16} className="text-orange-400" />
-                Fuel Consumption (Litres/month)
+              <label className="flex items-center gap-2 text-sm font-medium mb-2"
+                style={{ color: "var(--text-muted)" }}>
+                <Fuel size={14} className="text-orange-400" /> Fuel (Litres/mo)
               </label>
-              <input
-                type="number"
-                value={fuel}
-                onChange={(e) => setFuel(e.target.value)}
-                placeholder="e.g., 100"
-                className="w-full bg-[#1a1a1a] border border-[#333333] rounded-lg px-4 py-3 text-white placeholder-[#666666] focus:outline-none focus:border-[#c8f07a]"
-                required
-                min="0"
-                step="0.1"
-              />
+              <input type="number" value={fuel}
+                onChange={e => setFuel(e.target.value)}
+                placeholder="e.g. 100" className="cs-input" min="0" step="0.1" required />
               {fuel && (
-                <p className="text-xs text-orange-400 mt-2">
+                <p className="text-xs mt-1.5" style={{ color: "#f97316", fontFamily: "DM Mono" }}>
                   ≈ {(parseFloat(fuel) * 2.3).toFixed(1)} kg CO₂
                 </p>
               )}
             </div>
 
+            <div>
+              <label className="flex items-center gap-2 text-sm font-medium mb-2"
+                style={{ color: "var(--text-muted)" }}>
+                <Award size={14} className="text-purple-400" /> Industry Sector
+              </label>
+              <select value={sector} onChange={e => setSector(e.target.value)}
+                className="cs-input" style={{ cursor: "pointer" }}>
+                {(sectors.length ? sectors : [
+                  "General MSME","Manufacturing","Retail","Food & Beverage",
+                  "IT & Services","Healthcare","Transportation"
+                ]).map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
             <div className="flex items-end">
-              <button
-                type="submit"
-                disabled={loading || !electricity || !fuel || !backendConnected}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#c8f07a] text-black rounded-lg font-medium hover:bg-[#d4f5a0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+              <button type="submit" disabled={loading || !electricity || !fuel || !backendConnected}
+                className="btn-primary w-full flex items-center justify-center gap-2">
                 {loading ? (
-                  <>
-                    <Activity className="animate-spin" size={18} />
-                    Processing...
-                  </>
+                  <><Activity size={17} style={{ animation: "spin 1s linear infinite" }} /> Analysing...</>
                 ) : (
-                  <>
-                    <Calculator size={18} />
-                    Calculate Emissions
-                  </>
+                  <><Calculator size={17} /> Calculate & Analyse</>
                 )}
               </button>
             </div>
           </form>
-
-          <div className="mt-6 p-4 bg-[#1a1a1a] rounded-lg border border-[#333333]">
-            <p className="text-xs text-[#666666] font-mono">
-              Formula: Electricity × 0.82 kg/kWh + Fuel × 2.3 kg/Litre
-            </p>
-          </div>
         </div>
 
-        {/* Results */}
+        {/* ── Results ───────────────────────────────────── */}
         {emissionData && (
-          <>
-            {/* Key Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-[#c8f07a]/20 rounded-lg flex items-center justify-center">
-                    <Activity size={20} className="text-[#c8f07a]" />
+          <div key={dataKey} className="space-y-6">
+            {/* Score Ring + Key Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-5">
+              {/* Score Ring */}
+              <div className="card p-6 flex flex-col items-center justify-center gap-2 slide-in slide-in-1"
+                style={{ gridColumn: "span 1" }}>
+                <ScoreRing
+                  value={emissionData.carbon_score_value}
+                  label={emissionData.carbon_score}
+                  color={currentColor}
+                />
+                {confidence > 0 && (
+                  <div className="mt-2 w-full">
+                    <div className="flex justify-between mb-1"
+                      style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "DM Mono" }}>
+                      <span>ML Confidence</span>
+                      <span style={{ color: "#8b5cf6" }}>{confPct}%</span>
+                    </div>
+                    <div className="confidence-bar" style={{ "--w": `${confPct}%` } as any} />
                   </div>
-                  <span className="text-[#888888] text-sm">Total Emissions</span>
-                </div>
-                <p className="text-3xl font-bold text-white">{emissionData.total_co2.toFixed(1)} kg</p>
-                <p className="text-[#666666] text-sm mt-2">CO₂ equivalent</p>
+                )}
+                {emissionData.ml_model_used && (
+                  <p style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "DM Mono", textAlign: "center", marginTop: 4 }}>
+                    {emissionData.ml_model_used}
+                  </p>
+                )}
               </div>
 
-              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                    <Zap size={20} className="text-blue-400" />
+              {/* 4 metric cards */}
+              <div className="grid grid-cols-2 gap-4" style={{ gridColumn: "span 4" }}>
+                {[
+                  {
+                    label: "Total CO₂", val: emissionData.total_co2, unit: "kg",
+                    icon: <Activity size={18} style={{ color: "#c8f07a" }} />,
+                    bg: "rgba(200,240,122,0.1)", sub: emissionData.prediction_range
+                      ? `Range: ${emissionData.prediction_range.low.toFixed(0)}–${emissionData.prediction_range.high.toFixed(0)} kg`
+                      : "CO₂ equivalent", delay: "slide-in-1"
+                  },
+                  {
+                    label: "Electricity CO₂", val: emissionData.electricity_co2, unit: "kg",
+                    icon: <Zap size={18} className="text-blue-400" />,
+                    bg: "rgba(59,130,246,0.1)", sub: `${emissionData.breakdown_percentage.electricity}% of total`,
+                    delay: "slide-in-2"
+                  },
+                  {
+                    label: "Fuel CO₂", val: emissionData.fuel_co2, unit: "kg",
+                    icon: <Fuel size={18} className="text-orange-400" />,
+                    bg: "rgba(249,115,22,0.1)", sub: `${emissionData.breakdown_percentage.fuel}% of total`,
+                    delay: "slide-in-3"
+                  },
+                  {
+                    label: "Monthly Cost", val: emissionData.cost_savings?.current_monthly_cost_inr ?? 0, unit: "",
+                    icon: <DollarSign size={18} className="text-amber-400" />,
+                    bg: "rgba(245,158,11,0.1)",
+                    sub: `Save ₹${emissionData.cost_savings?.potential_monthly_savings_inr?.toLocaleString("en-IN") ?? 0}/mo`,
+                    prefix: "₹", delay: "slide-in-4"
+                  },
+                ].map(({ label, val, unit, icon, bg, sub, prefix, delay }) => (
+                  <div key={label} className={`card p-5 metric-card slide-in ${delay}`}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: bg }}>
+                        {icon}
+                      </div>
+                      <span style={{ color: "var(--text-muted)", fontSize: 13 }}>{label}</span>
+                    </div>
+                    <p className="text-2xl font-bold" style={{ color: "var(--text-primary)", fontFamily: "DM Mono" }}>
+                      {prefix ?? ""}<AnimatedNumber value={val} decimals={1} suffix={unit ? ` ${unit}` : ""} />
+                    </p>
+                    <p className="text-xs mt-1.5" style={{ color: "var(--text-secondary)" }}>{sub}</p>
                   </div>
-                  <span className="text-[#888888] text-sm">Electricity</span>
-                </div>
-                <p className="text-3xl font-bold text-white">{emissionData.electricity_co2.toFixed(1)} kg</p>
-                <p className="text-[#666666] text-sm mt-2">{emissionData.breakdown_percentage.electricity}% of total</p>
-              </div>
-
-              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
-                    <Fuel size={20} className="text-orange-400" />
-                  </div>
-                  <span className="text-[#888888] text-sm">Fuel</span>
-                </div>
-                <p className="text-3xl font-bold text-white">{emissionData.fuel_co2.toFixed(1)} kg</p>
-                <p className="text-[#666666] text-sm mt-2">{emissionData.breakdown_percentage.fuel}% of total</p>
-              </div>
-
-              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
-                    <Leaf size={20} className="text-purple-400" />
-                  </div>
-                  <span className="text-[#888888] text-sm">Carbon Score</span>
-                </div>
-                <p className="text-3xl font-bold" style={{ color: getScoreColor(emissionData.carbon_score) }}>
-                  {emissionData.carbon_score}
-                </p>
-                <p className="text-[#666666] text-sm mt-2">{emissionData.carbon_score_value}/100</p>
+                ))}
               </div>
             </div>
 
-            {/* AI Suggestions Section */}
-            {aiSuggestions.length > 0 && (
-              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                    <BarChart3 size={20} className="text-blue-400" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-white">AI Suggestions</h2>
-                    <p className="text-[#888888] text-sm">Personalized recommendations from AI Model 1</p>
-                  </div>
-                </div>
+            {/* Benchmark + Cost grid */}
+            {(emissionData.industry_benchmark || emissionData.cost_savings) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {emissionData.industry_benchmark && <BenchmarkBar benchmark={emissionData.industry_benchmark} />}
+                {emissionData.cost_savings && <CostSavingsCard cost={emissionData.cost_savings} />}
+              </div>
+            )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {aiSuggestions.slice(0, 4).map((suggestion: any, index: number) => (
-                    <div key={index} className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <div className="flex items-start gap-3">
-                        <div className={`w-2 h-2 rounded-full mt-2 ${
-                          suggestion.priority === "high" ? "bg-red-500" :
-                          suggestion.priority === "medium" ? "bg-yellow-500" : "bg-green-500"
-                        }`} />
-                        <div className="flex-1">
-                          <h3 className="text-white font-semibold mb-1">{suggestion.title}</h3>
-                          <p className="text-[#888888] text-sm">{suggestion.description}</p>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className="text-xs text-[#c8f07a] font-mono">
-                              Save {suggestion.savings_percentage}%
-                            </span>
-                            <span className="text-xs text-[#666666]">•</span>
-                            <span className="text-xs text-[#888888]">{suggestion.category}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+            {/* Data quality flags */}
+            {emissionData.data_quality_flags && emissionData.data_quality_flags.length > 0 && (
+              <div className="card p-4 flex flex-wrap gap-2 slide-in slide-in-3"
+                style={{ borderColor: "rgba(245,158,11,0.25)", background: "rgba(245,158,11,0.04)" }}>
+                <Shield size={14} className="text-amber-400 mt-0.5" />
+                <div className="flex flex-wrap gap-2">
+                  {emissionData.data_quality_flags.map((f, i) => (
+                    <span key={i} style={{ fontSize: 12, color: "#f59e0b" }}>{f}</span>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* AI Insights Button */}
-            <div className="flex justify-end">
-              <button
-                onClick={generateAIInsights}
-                disabled={aiLoading || !backendConnected}
-                className="flex items-center gap-2 px-6 py-3 bg-[#c8f07a] text-black rounded-lg font-medium hover:bg-[#d4f5a0] transition-colors disabled:opacity-50"
-              >
-                {aiLoading ? (
-                  <Activity className="animate-spin" size={18} />
-                ) : (
-                  <Lightbulb size={18} />
-                )}
-                {aiLoading ? "Generating AI Insights..." : "Generate AI Insights"}
-              </button>
-            </div>
-
-            {/* AI Insights Section */}
-            {aiInsights && (
-              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-[#c8f07a]/20 rounded-lg flex items-center justify-center">
-                    <Lightbulb size={20} className="text-[#c8f07a]" />
+            {/* AI Suggestions */}
+            {aiSuggestions.length > 0 && (
+              <div className="card p-6 slide-in slide-in-2">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "rgba(34,197,94,0.12)" }}>
+                    <Lightbulb size={18} style={{ color: "#22c55e" }} />
                   </div>
                   <div>
-                    <h2 className="text-xl font-bold text-white">AI-Powered Insights</h2>
-                    <p className="text-[#888888] text-sm">
-                      Powered by {aiInsights.api_used === "gemini" ? "Gemini" : aiInsights.api_used === "openai" ? "OpenAI" : "AI Models"}
-                      {aiInsights.fallback && " (Fallback)"}
+                    <h2 style={{ fontFamily: "Syne", fontSize: 16, color: "var(--text-primary)" }}>AI Recommendations</h2>
+                    <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Personalised reduction strategies with cost impact</p>
+                  </div>
+                  <button onClick={generateAIInsights} disabled={aiLoading || !backendConnected}
+                    className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                    style={{ background: "rgba(200,240,122,0.12)", color: "#c8f07a", border: "1px solid rgba(200,240,122,0.25)" }}>
+                    {aiLoading
+                      ? <><RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> Generating...</>
+                      : <><Sparkles size={14} /> Deep AI Analysis</>
+                    }
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {aiSuggestions.slice(0, 6).map((s: any, i: number) => {
+                    const prioColor: any = { Critical: "#ef4444", High: "#f59e0b", Medium: "#3b82f6", Low: "#22c55e" };
+                    const prioClass: any = { Critical: "badge-critical", High: "badge-high", Medium: "badge-medium", Low: "badge-low" };
+                    return (
+                      <div key={i} className="rounded-xl p-4 transition-all"
+                        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)" }}
+                        onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--border-light)")}
+                        onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <h3 style={{ fontFamily: "Syne", fontSize: 14, color: "var(--text-primary)" }}>{s.title}</h3>
+                          <span className={`badge ${prioClass[s.priority] || "badge-medium"}`}>{s.priority}</span>
+                        </div>
+                        <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>{s.description}</p>
+                        <div className="flex flex-wrap items-center gap-3 mt-3">
+                          <span style={{ fontSize: 12, color: "#22c55e", fontFamily: "DM Mono" }}>
+                            -{s.savings_percentage}% CO₂
+                          </span>
+                          {s.cost_savings_inr > 0 && (
+                            <span style={{ fontSize: 12, color: "#f59e0b", fontFamily: "DM Mono" }}>
+                              ₹{s.cost_savings_inr.toLocaleString("en-IN")}/mo saved
+                            </span>
+                          )}
+                          {s.payback_months > 0 && (
+                            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                              {s.payback_months}mo payback
+                            </span>
+                          )}
+                          {s.confidence && (
+                            <span className="badge badge-confidence" style={{ fontSize: 10 }}>
+                              {Math.round(s.confidence * 100)}% conf
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Deep AI Insights */}
+            {aiInsights && (
+              <div className="card p-6 slide-in slide-in-1"
+                style={{ borderColor: "rgba(200,240,122,0.2)", background: "rgba(200,240,122,0.02)" }}>
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "rgba(200,240,122,0.15)" }}>
+                    <Sparkles size={18} style={{ color: "#c8f07a" }} />
+                  </div>
+                  <div>
+                    <h2 style={{ fontFamily: "Syne", fontSize: 16, color: "var(--text-primary)" }}>Deep AI Insights</h2>
+                    <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      {aiInsights.api_used === "gemini" ? "⚡ Gemini Flash" : aiInsights.api_used === "openai" ? "🤖 GPT-4o-mini" : "📊 Rule-based Engine"}
+                      {aiInsights.fallback ? " (fallback)" : ""}
                     </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {aiInsights.insights?.map((insight: any, index: number) => (
-                    <div key={index} className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <div className="flex items-start gap-3">
-                        <div className={`w-2 h-2 rounded-full mt-2 ${
-                          insight.priority === "high" ? "bg-red-500" :
-                          insight.priority === "medium" ? "bg-yellow-500" : "bg-green-500"
-                        }`} />
-                        <div className="flex-1">
-                          <span className="text-xs text-[#c8f07a] font-mono">{insight.model}</span>
-                          <h3 className="text-white font-semibold mb-1 mt-1">{insight.title}</h3>
-                          <p className="text-[#888888] text-sm">{insight.content}</p>
-                          {insight.action && (
-                            <p className="text-[#c8f07a] text-sm mt-2">→ {insight.action}</p>
-                          )}
-                        </div>
-                      </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {aiInsights.insights?.map((ins: any, i: number) => (
+                    <div key={i} className="rounded-xl p-4"
+                      style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)" }}>
+                      <p style={{ fontSize: 10, color: "#c8f07a", fontFamily: "DM Mono", marginBottom: 4 }}>{ins.model}</p>
+                      <h3 style={{ fontFamily: "Syne", fontSize: 14, color: "var(--text-primary)", marginBottom: 6 }}>{ins.title}</h3>
+                      <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>{ins.content}</p>
+                      {ins.action && <p style={{ fontSize: 12, color: "#c8f07a", marginTop: 8 }}>→ {ins.action}</p>}
                     </div>
                   ))}
                 </div>
 
-                {/* Summary */}
                 {aiInsights.summary && (
-                  <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <span className="text-[#888888] text-sm">Total Emissions</span>
-                      <p className="text-xl font-bold text-white">{aiInsights.summary.total_emissions?.toFixed(1)} kg</p>
-                    </div>
-                    <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <span className="text-[#888888] text-sm">Carbon Score</span>
-                      <p className="text-xl font-bold text-white">{aiInsights.summary.carbon_score}</p>
-                    </div>
-                    <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <span className="text-[#888888] text-sm">Improvement</span>
-                      <p className="text-xl font-bold text-[#c8f07a]">{aiInsights.summary.improvement_potential}</p>
-                    </div>
-                    <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <span className="text-[#888888] text-sm">Priority</span>
-                      <p className={`text-xl font-bold ${
-                        aiInsights.summary.priority_level === "Critical" ? "text-red-500" :
-                        aiInsights.summary.priority_level === "High" ? "text-orange-500" :
-                        aiInsights.summary.priority_level === "Medium" ? "text-yellow-500" : "text-green-500"
-                      }`}>
-                        {aiInsights.summary.priority_level}
-                      </p>
-                    </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+                    {[
+                      { label: "Total Emissions", val: `${aiInsights.summary.total_emissions?.toFixed(1)} kg` },
+                      { label: "Carbon Score", val: aiInsights.summary.carbon_score },
+                      { label: "Improvement", val: aiInsights.summary.improvement_potential, color: "#22c55e" },
+                      { label: "Priority", val: aiInsights.summary.priority_level,
+                        color: aiInsights.summary.priority_level === "Critical" ? "#ef4444" :
+                          aiInsights.summary.priority_level === "High" ? "#f97316" :
+                          aiInsights.summary.priority_level === "Medium" ? "#f59e0b" : "#22c55e" },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} className="rounded-lg p-4"
+                        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)" }}>
+                        <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{label}</p>
+                        <p style={{ fontFamily: "DM Mono", fontSize: 14, fontWeight: 700, color: color ?? "var(--text-primary)" }}>{val}</p>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
       </main>
     </div>

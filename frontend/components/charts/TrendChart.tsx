@@ -64,31 +64,51 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function TrendChart({ history, forecast, modelUsed, currentMonth, model3Status = "disconnected" }: TrendChartProps) {
-  // Inject the current calculation as the last data point
-  const chartData = history.map((h) => ({
-    month: h.month.replace(" 2024", "").replace(" 2025", ""),
-    electricity: h.electricity_co2,
-    fuel: h.fuel_co2,
-    total: h.total_co2,
-    isForecast: false,
-  }));
+  // Format the history data with proper date handling
+  const chartData = history.map((h, index) => {
+    // Parse the month field or create a date label
+    let displayMonth = h.month;
+    if (displayMonth.includes("2024") || displayMonth.includes("2025")) {
+      // Clean up the month format
+      displayMonth = displayMonth.replace(" 2024", "").replace(" 2025", "");
+    }
+    
+    return {
+      month: displayMonth,
+      electricity: h.electricity_co2,
+      fuel: h.fuel_co2,
+      total: h.total_co2,
+      isForecast: false,
+    };
+  });
 
   if (currentMonth && currentMonth.total_co2 > 0) {
-    chartData[chartData.length - 1] = {
-      month: "Jan ★",
+    // Add current month as the last data point
+    const today = new Date();
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const currentMonthLabel = monthNames[today.getMonth()] + " ★";
+    
+    chartData.push({
+      month: currentMonthLabel,
       electricity: currentMonth.electricity_co2,
       fuel: currentMonth.fuel_co2,
       total: currentMonth.total_co2,
       isForecast: false,
-    };
+    });
   }
 
   // Add forecast data from Model 3 if available
   if (forecast && forecast.length > 0) {
-    const forecastMonths = ["Feb", "Mar", "Apr", "May", "Jun", "Jul"];
+    const today = new Date();
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    
+    // Get the next months for forecast
     forecast.slice(0, 6).forEach((value, index) => {
+      const forecastDate = new Date(today.getFullYear(), today.getMonth() + index + 1, 1);
+      const forecastMonthLabel = monthNames[forecastDate.getMonth()];
+      
       chartData.push({
-        month: forecastMonths[index] || `M${index + 2}`,
+        month: forecastMonthLabel,
         electricity: 0,
         fuel: 0,
         total: typeof value === "number" ? value : 0,

@@ -82,7 +82,7 @@ export default function Home() {
       setModel2Status("connected");
     } catch (e) {
       console.error(e);
-      alert("Could not connect to backend. Make sure FastAPI is running on port 8000.");
+      alert("Could not connect to backend. Make sure FastAPI is running on port 8005.");
       setModel1Status("disconnected");
       setModel2Status("disconnected");
     } finally {
@@ -438,9 +438,8 @@ export default function Home() {
               modelUsed={suggestionsModelUsed}
             />
             <Simulator
-              electricity_kwh={inputs.electricity}
-              fuel_litres={inputs.fuel}
-              initialTotal={emissionData?.total_co2 ?? 0}
+              electricityKwh={inputs.electricity}
+              fuelLitres={inputs.fuel}
             />
           </div>
 

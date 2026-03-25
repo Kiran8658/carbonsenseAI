@@ -1,21 +1,24 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import Sidebar from "../components/Sidebar";
+import PieBreakdown from "../components/charts/PieBreakdown";
+import TrendChart from "../components/charts/TrendChart";
 import { 
   FileText, 
   Download, 
   Activity, 
   Zap, 
   Fuel, 
-  Lightbulb,
   Calculator,
   BarChart3,
   TrendingUp,
   AlertCircle,
-  CheckCircle,
-  Sparkles,
-  Bot
+  CheckCircle
 } from "lucide-react";
+
+const API_URL = typeof window !== "undefined"
+  ? `http://${window.location.hostname}:8005`
+  : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8005");
 
 interface EmissionData {
   total_co2: number;
@@ -35,15 +38,6 @@ interface ModelStatus {
   trend_model: string;
 }
 
-interface AIInsight {
-  model: string;
-  type: string;
-  title: string;
-  content: string;
-  action?: string;
-  priority: string;
-}
-
 export default function ReportsPage() {
   const [electricity, setElectricity] = useState("");
   const [fuel, setFuel] = useState("");
@@ -51,9 +45,6 @@ export default function ReportsPage() {
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiInsights, setAiInsights] = useState<any>(null);
-  const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
   const [reportGenerating, setReportGenerating] = useState(false);
 
   useEffect(() => {
@@ -76,13 +67,12 @@ export default function ReportsPage() {
   const refreshData = async () => {
     if (!electricity || !fuel) return;
     try {
-      const response = await axios.post("http://localhost:8000/api/calculate", {
+      const response = await axios.post("http://localhost:8005/api/calculate", {
         electricity_kwh: parseFloat(electricity),
         fuel_litres: parseFloat(fuel),
       });
       if (response.data?.data) {
         setEmissionData(response.data.data);
-        fetchAllAIData(response.data.data);
       }
     } catch (error) {
       console.error("Auto-refresh error:", error);
@@ -91,7 +81,7 @@ export default function ReportsPage() {
 
   const checkBackendStatus = async () => {
     try {
-      const response = await axios.get("http://localhost:8000/health", { timeout: 3000 });
+      const response = await axios.get(`${API_URL}/health`, { timeout: 3000 });
       if (response.data) {
         setBackendConnected(true);
         setModelStatus(response.data.models);
@@ -107,82 +97,25 @@ export default function ReportsPage() {
     if (!electricity || !fuel) return;
 
     if (!backendConnected) {
-      alert("Backend is not connected! Please start the backend server on port 8000.");
+      alert("Backend is not connected! Please start the backend server on port 8005.");
       return;
     }
 
     setLoading(true);
     try {
-      const response = await axios.post("http://localhost:8000/api/calculate", {
+      const response = await axios.post(`${API_URL}/api/calculate`, {
         electricity_kwh: parseFloat(electricity),
         fuel_litres: parseFloat(fuel),
       });
       
       if (response.data && response.data.data) {
         setEmissionData(response.data.data);
-        // Automatically fetch all AI data
-        fetchAllAIData(response.data.data);
       }
     } catch (error) {
       console.error("Error calculating emissions:", error);
       alert("Failed to calculate. Please check backend connection.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchAllAIData = async (data: EmissionData) => {
-    try {
-      // Fetch AI Suggestions
-      const suggestionsResponse = await axios.post("http://localhost:8000/api/ai-suggestions", {
-        electricity_kwh: parseFloat(electricity),
-        fuel_litres: parseFloat(fuel),
-        total_co2: data.total_co2,
-        business_type: "MSME"
-      });
-      
-      if (suggestionsResponse.data && suggestionsResponse.data.suggestions) {
-        setAiSuggestions(suggestionsResponse.data.suggestions);
-      }
-
-      // Fetch AI Insights automatically
-      const insightsResponse = await axios.post("http://localhost:8000/api/reports/ai-insights", {
-        emission_data: data,
-        suggestions: suggestionsResponse.data?.suggestions || [],
-        history: [],
-        forecast: [],
-      });
-      
-      if (insightsResponse.data.success) {
-        setAiInsights(insightsResponse.data);
-      }
-    } catch (error) {
-      console.error("Error fetching AI data:", error);
-    }
-  };
-
-  const generateAIInsights = async () => {
-    if (!emissionData || !backendConnected) {
-      alert("Please calculate emissions first and ensure backend is connected.");
-      return;
-    }
-    
-    try {
-      setAiLoading(true);
-      const response = await axios.post("http://localhost:8000/api/reports/ai-insights", {
-        emission_data: emissionData,
-        suggestions: aiSuggestions,
-        history: [],
-        forecast: [],
-      });
-      
-      if (response.data.success) {
-        setAiInsights(response.data);
-      }
-    } catch (error) {
-      console.error("Error generating AI insights:", error);
-    } finally {
-      setAiLoading(false);
     }
   };
 
@@ -194,24 +127,49 @@ export default function ReportsPage() {
 
     setReportGenerating(true);
     try {
-      const response = await axios.post("http://localhost:8000/api/reports/generate", {
+      const response = await axios.post(`${API_URL}/api/reports/generate-download`, {
         emission_data: emissionData,
-        ai_insights: aiInsights,
-        suggestions: aiSuggestions,
-      }, { responseType: 'blob' });
+        history: [],
+        forecast: [],
+        models_used: {},
+      }, { 
+        responseType: 'blob',
+        timeout: 30000 
+      });
 
-      // Create download link
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      // response.data is already a Blob when using responseType: 'blob'
+      const blob = response.data;
+      
+      if (!blob || blob.size === 0) {
+        throw new Error("Received empty PDF. Check backend logs.");
+      }
+
+      // Check if it's actually a PDF
+      if (!blob.type.includes('application/pdf') && !blob.type.includes('octet-stream')) {
+        const text = await blob.text();
+        if (text.includes('error') || text.includes('Error')) {
+          throw new Error(`Backend error: ${text.substring(0, 200)}`);
+        }
+      }
+
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `carbon-report-${new Date().toISOString().split('T')[0]}.pdf`);
+      link.setAttribute('download', `CarbonSense_Report_${new Date().toISOString().split('T')[0]}.pdf`);
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
+      
+      // Cleanup
+      setTimeout(() => {
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }, 100);
+
+      alert("✅ Report downloaded successfully!");
+    } catch (error: any) {
       console.error("Error downloading PDF:", error);
-      alert("Failed to download PDF. Please try again.");
+      const errorMsg = error?.response?.data?.detail || error?.message || "Unknown error";
+      alert(`❌ Failed to download PDF: ${errorMsg}`);
     } finally {
       setReportGenerating(false);
     }
@@ -224,15 +182,6 @@ export default function ReportsPage() {
       case "Average": return "#eab308";
       case "Poor": return "#f97316";
       default: return "#ef4444";
-    }
-  };
-
-  const getModelStatusColor = (status: string) => {
-    switch (status) {
-      case "loaded": return "bg-green-500";
-      case "loading": return "bg-yellow-500";
-      case "error": return "bg-red-500";
-      default: return "bg-gray-500";
     }
   };
 
@@ -262,33 +211,6 @@ export default function ReportsPage() {
             </span>
           </div>
         </div>
-
-        {/* AI Model Status */}
-        {modelStatus && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-4 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${getModelStatusColor(modelStatus.emissions_model)}`} />
-              <div>
-                <p className="text-white font-medium text-sm">Emissions Predictor</p>
-                <p className="text-[#666666] text-xs">Model 1 • {modelStatus.emissions_model}</p>
-              </div>
-            </div>
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-4 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${getModelStatusColor(modelStatus.scorer_model)}`} />
-              <div>
-                <p className="text-white font-medium text-sm">Carbon Scorer</p>
-                <p className="text-[#666666] text-xs">Model 2 • {modelStatus.scorer_model}</p>
-              </div>
-            </div>
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-4 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${getModelStatusColor(modelStatus.trend_model)}`} />
-              <div>
-                <p className="text-white font-medium text-sm">Trend Forecaster</p>
-                <p className="text-[#666666] text-xs">Model 3 • {modelStatus.trend_model}</p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Input Form */}
         <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
@@ -355,7 +277,7 @@ export default function ReportsPage() {
                   </>
                 ) : (
                   <>
-                    <Sparkles size={18} />
+                    <FileText size={18} />
                     Generate Full Report
                   </>
                 )}
@@ -481,141 +403,30 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            {/* Model 3: AI Suggestions Output */}
-            {aiSuggestions.length > 0 && (
+            {/* Charts Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Pie Breakdown Chart - Model 1 */}
               <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
-                    <Bot size={20} className="text-green-400" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-white">Model 3: AI Suggestions Engine</h2>
-                    <p className="text-[#888888] text-sm">Personalized reduction strategies</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {aiSuggestions.map((suggestion: any, index: number) => (
-                    <div key={index} className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                      <div className="flex items-start gap-3">
-                        <div className={`w-2 h-2 rounded-full mt-2 ${
-                          suggestion.priority === "high" ? "bg-red-500" :
-                          suggestion.priority === "medium" ? "bg-yellow-500" : "bg-green-500"
-                        }`} />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="text-white font-semibold">{suggestion.title}</h3>
-                            <span className="text-xs px-2 py-0.5 bg-[#c8f07a]/20 text-[#c8f07a] rounded-full">
-                              {suggestion.category}
-                            </span>
-                          </div>
-                          <p className="text-[#888888] text-sm">{suggestion.description}</p>
-                          <div className="flex items-center gap-3 mt-3">
-                            <span className="text-xs text-[#c8f07a] font-mono bg-[#c8f07a]/10 px-2 py-1 rounded">
-                              Save {suggestion.savings_percentage}%
-                            </span>
-                            <span className="text-xs text-[#666666]">
-                              Impact: {suggestion.impact}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* AI Insights with Recommendations */}
-            <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-[#c8f07a]/20 rounded-lg flex items-center justify-center">
-                    <Lightbulb size={20} className="text-[#c8f07a]" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-white">AI-Powered Insights & Recommendations</h2>
-                    <p className="text-[#888888] text-sm">
-                      {aiInsights ? `Powered by ${aiInsights.api_used === "gemini" ? "Gemini" : aiInsights.api_used === "openai" ? "OpenAI" : "AI Models"}` : "Click to generate insights"}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={generateAIInsights}
-                  disabled={aiLoading || !backendConnected}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#c8f07a] text-black rounded-lg font-medium hover:bg-[#d4f5a0] transition-colors disabled:opacity-50"
-                >
-                  {aiLoading ? (
-                    <Activity className="animate-spin" size={16} />
-                  ) : (
-                    <Sparkles size={16} />
-                  )}
-                  {aiLoading ? "Generating..." : aiInsights ? "Regenerate Insights" : "Get Recommendations"}
-                </button>
+                <PieBreakdown 
+                  data={emissionData}
+                  model1Status={(modelStatus?.emissions_model as any) || "disconnected"}
+                />
               </div>
 
-              {aiInsights ? (
-                <>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                    {aiInsights.insights?.map((insight: AIInsight, index: number) => (
-                      <div key={index} className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                        <div className="flex items-start gap-3">
-                          <div className={`w-2 h-2 rounded-full mt-2 ${
-                            insight.priority === "high" ? "bg-red-500" :
-                            insight.priority === "medium" ? "bg-yellow-500" : "bg-green-500"
-                          }`} />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs text-[#c8f07a] font-mono">{insight.model}</span>
-                              <span className="text-xs text-[#666666]">• {insight.type}</span>
-                            </div>
-                            <h3 className="text-white font-semibold mb-1">{insight.title}</h3>
-                            <p className="text-[#888888] text-sm">{insight.content}</p>
-                            {insight.action && (
-                              <div className="mt-3 p-2 bg-[#c8f07a]/10 rounded-lg border border-[#c8f07a]/20">
-                                <p className="text-[#c8f07a] text-sm">→ {insight.action}</p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Summary */}
-                  {aiInsights.summary && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                        <span className="text-[#888888] text-sm">Total Emissions</span>
-                        <p className="text-xl font-bold text-white">{aiInsights.summary.total_emissions?.toFixed(1)} kg</p>
-                      </div>
-                      <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                        <span className="text-[#888888] text-sm">Carbon Score</span>
-                        <p className="text-xl font-bold text-white">{aiInsights.summary.carbon_score}</p>
-                      </div>
-                      <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                        <span className="text-[#888888] text-sm">Improvement</span>
-                        <p className="text-xl font-bold text-[#c8f07a]">{aiInsights.summary.improvement_potential}</p>
-                      </div>
-                      <div className="bg-[#1a1a1a] rounded-xl p-4 border border-[#333333]">
-                        <span className="text-[#888888] text-sm">Priority</span>
-                        <p className={`text-xl font-bold ${
-                          aiInsights.summary.priority_level === "Critical" ? "text-red-500" :
-                          aiInsights.summary.priority_level === "High" ? "text-orange-500" :
-                          aiInsights.summary.priority_level === "Medium" ? "text-yellow-500" : "text-green-500"
-                        }`}>
-                          {aiInsights.summary.priority_level}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="text-center py-12 text-[#666666]">
-                  <Lightbulb size={48} className="mx-auto mb-4 opacity-50" />
-                  <p>Click "Get Recommendations" to generate AI insights from all 3 models</p>
-                </div>
-              )}
+              {/* Trend Chart - Model 3 */}
+              <div className="bg-[#111111] border border-[#222222] rounded-2xl p-6">
+                <TrendChart
+                  history={[]}
+                  forecast={[]}
+                  modelUsed="Model 3"
+                  currentMonth={{
+                    electricity_co2: emissionData.electricity_co2,
+                    fuel_co2: emissionData.fuel_co2,
+                    total_co2: emissionData.total_co2
+                  }}
+                  model3Status={(modelStatus?.trend_model as any) || "disconnected"}
+                />
+              </div>
             </div>
 
             {/* Download PDF Button */}

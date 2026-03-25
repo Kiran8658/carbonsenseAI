@@ -3,10 +3,11 @@ Reports API Routes - Generate and manage PDF reports.
 """
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from services.report_service import generate_pdf_report
 from services.ml_service import get_model_status
 from services.llm_service import generate_ai_insights_with_fallback
+from io import BytesIO
 import os
 import logging
 from datetime import datetime
@@ -23,24 +24,125 @@ REPORT_COUNTER = 0
 @router.post("/generate")
 async def generate_report(payload: dict):
     """
-    Generate a PDF report from current emission data and suggestions.
-    
-    Payload:
-    {
-        "emission_data": {...},
-        "suggestions": [...],
-        "summary": "...",
-        "history": [...],
-        "forecast": [...],
-        "models_used": {"emissions_model": "...", "scorer_model": "...", "trend_model": "..."}
-    }
+    Generate a PDF report and return report_id (stored on server).
+    Use /generate-download to get a direct blob response instead.
     """
     try:
         global REPORT_COUNTER
         
-        # Extract data from payload
         emission_data = payload.get("emission_data", {})
         suggestions = payload.get("suggestions", [])
+        summary = payload.get("summary", "")
+        history = payload.get("history", [])
+        forecast = payload.get("forecast", [])
+        models_used = payload.get("models_used", {})
+        
+        if not emission_data:
+            raise ValueError("emission_data is required")
+        
+        logger.info("📄 Generating PDF report...")
+        pdf_bytes = generate_pdf_report(
+            emission_data=emission_data,
+            suggestions=suggestions,
+            summary=summary,
+            history=history,
+            forecast=forecast,
+            models_used=models_used,
+        )
+        
+        REPORT_COUNTER += 1
+        report_id = f"report_{REPORT_COUNTER}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        report_filename = f"{report_id}.pdf"
+        report_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports", report_filename)
+        
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        
+        with open(report_path, "wb") as f:
+            f.write(pdf_bytes)
+        
+        REPORTS[report_id] = {
+            "id": report_id,
+            "filename": report_filename,
+            "path": report_path,
+            "date": datetime.now().isoformat(),
+            "co2": emission_data.get("total_co2", 0),
+            "score": emission_data.get("carbon_score", "N/A"),
+        }
+        
+        logger.info(f"✅ Report generated: {report_id}")
+        
+        return {
+            "success": True,
+            "report_id": report_id,
+            "message": "Report generated successfully",
+            "download_url": f"/api/reports/download/{report_id}",
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Report generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+
+@router.post("/generate-download")
+async def generate_and_download_report(payload: dict):
+    """
+    Generate a PDF report and stream it directly as a downloadable blob response.
+    Frontend receives the binary PDF directly — no two-step generate+download needed.
+    """
+    try:
+        emission_data = payload.get("emission_data", {})
+        suggestions = payload.get("suggestions", [])
+        summary = payload.get("summary", "")
+        history = payload.get("history", []) or []
+        forecast = payload.get("forecast", []) or []
+        models_used = payload.get("models_used", {}) or {}
+        
+        if not emission_data:
+            raise ValueError("emission_data is required")
+        
+        # Validate essential fields
+        if not isinstance(emission_data, dict):
+            raise ValueError("emission_data must be a dictionary")
+        
+        logger.info("📄 Generating PDF report for download...")
+        
+        # Generate PDF
+        pdf_bytes = generate_pdf_report(
+            emission_data=emission_data,
+            suggestions=suggestions if suggestions else [],
+            summary=summary if summary else "",
+            history=history,
+            forecast=forecast,
+            models_used=models_used,
+        )
+        
+        if not pdf_bytes or len(pdf_bytes) == 0:
+            raise ValueError("PDF generation returned empty bytes")
+        
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        filename = f"CarbonSense_Report_{date_str}.pdf"
+        
+        logger.info(f"✅ Streaming PDF report: {filename} ({len(pdf_bytes)} bytes)")
+        
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(pdf_bytes)),
+                "Access-Control-Expose-Headers": "Content-Disposition, Content-Length",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            },
+        )
+    
+    except ValueError as e:
+        logger.error(f"❌ Validation error: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ Generate-download failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
+
+
         summary = payload.get("summary", "")
         history = payload.get("history", [])
         forecast = payload.get("forecast", [])

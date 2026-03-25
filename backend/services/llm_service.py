@@ -10,9 +10,10 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# API Keys
-GEMINI_API_KEY = "AIzaSyBr2AaDxwo5-s4niA-CxNY-H3m_m7ORXpA"
-OPENAI_API_KEY = "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"
+# API Keys - Gemini (Primary) and OpenAI (Fallback)
+# Note: These must be set via environment variables for security
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Try importing both libraries
 try:
@@ -33,11 +34,14 @@ except ImportError:
 def init_gemini() -> Optional[Any]:
     """Initialize Gemini model."""
     if not GEMINI_AVAILABLE:
+        logger.warning("⚠️ google-generativeai not installed")
         return None
+    if not GEMINI_API_KEY or GEMINI_API_KEY.startswith("AIzaSy"):
+        logger.warning("⚠️ Gemini API key not properly configured")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash')
-        logger.info("✅ Gemini initialized")
+        logger.info("✅ Gemini initialized successfully")
         return model
     except Exception as e:
         logger.error(f"❌ Gemini init failed: {e}")
@@ -47,10 +51,13 @@ def init_gemini() -> Optional[Any]:
 def init_openai() -> Optional[Any]:
     """Initialize OpenAI client."""
     if not OPENAI_AVAILABLE:
+        logger.warning("⚠️ openai not installed")
         return None
+    if not OPENAI_API_KEY or OPENAI_API_KEY.startswith("sk-"):
+        logger.warning("⚠️ OpenAI API key not properly configured")
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
-        logger.info("✅ OpenAI initialized")
+        logger.info("✅ OpenAI initialized successfully")
         return client
     except Exception as e:
         logger.error(f"❌ OpenAI init failed: {e}")

@@ -189,7 +189,7 @@ def generate_pdf_report(
     )
     
     # Title
-    story.append(Paragraph("🌿 CarbonSense AI Sustainability Report", title_style))
+    story.append(Paragraph("CarbonSense AI Sustainability Report", title_style))
     story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
     story.append(Spacer(1, 0.3*inch))
     
@@ -202,10 +202,10 @@ def generate_pdf_report(
     
     summary_data = [
         ["Metric", "Value"],
-        ["Monthly CO₂ Emissions", f"{total_co2:.1f} kg"],
+        ["Monthly CO2 Emissions", f"{total_co2:.1f} kg"],
         ["Carbon Score", f"{carbon_score} ({score_value}/100)"],
-        ["Electricity Usage", f"{emission_data.get('electricity_co2', 0):.1f} kg CO₂"],
-        ["Fuel Usage", f"{emission_data.get('fuel_co2', 0):.1f} kg CO₂"],
+        ["Electricity Usage", f"{emission_data.get('electricity_co2', 0):.1f} kg CO2"],
+        ["Fuel Usage", f"{emission_data.get('fuel_co2', 0):.1f} kg CO2"],
     ]
     
     summary_table = Table(summary_data, colWidths=[3*inch, 3*inch])
@@ -231,7 +231,7 @@ def generate_pdf_report(
     fuel_pct = emission_data.get("breakdown_percentage", {}).get("fuel", 0)
     
     breakdown_data = [
-        ["Source", "CO₂ (kg)", "Percentage"],
+        ["Source", "CO2 (kg)", "Percentage"],
         ["Electricity", f"{emission_data.get('electricity_co2', 0):.1f}", f"{electricity_pct:.1f}%"],
         ["Fuel", f"{emission_data.get('fuel_co2', 0):.1f}", f"{fuel_pct:.1f}%"],
     ]
@@ -252,7 +252,7 @@ def generate_pdf_report(
     # 6-Month Trend
     story.append(Paragraph("6-Month Historical Trend", heading_style))
     
-    history_data = [["Month", "Total CO₂ (kg)"]]
+    history_data = [["Month", "Total CO2 (kg)"]]
     for entry in history:
         month = entry.get("month", "N/A").replace(" 2024", "").replace(" 2025", "")
         total = entry.get("total_co2", 0)
@@ -270,58 +270,6 @@ def generate_pdf_report(
     story.append(history_table)
     story.append(Spacer(1, 0.2*inch))
     
-    # Forecast
-    if forecast and len(forecast) > 0:
-        story.append(Paragraph("6-Month ML Forecast", heading_style))
-        
-        forecast_months = ["Feb", "Mar", "Apr", "May", "Jun", "Jul"]
-        forecast_data = [["Month", "Predicted CO₂ (kg)"]]
-        for i, value in enumerate(forecast[:6]):
-            month = forecast_months[i] if i < len(forecast_months) else f"M{i+2}"
-            forecast_data.append([month, f"{value:.1f}"])
-        
-        forecast_table = Table(forecast_data, colWidths=[3*inch, 3*inch])
-        forecast_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8b5cf6')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#faf5ff')]),
-        ]))
-        story.append(forecast_table)
-        story.append(Spacer(1, 0.2*inch))
-    
-    # Page break for recommendations
-    story.append(PageBreak())
-    
-    # Sustainability Recommendations
-    story.append(Paragraph("Sustainability Recommendations (Categorized by Impact)", heading_style))
-    story.append(Spacer(1, 0.1*inch))
-    
-    categorized = categorize_suggestions_by_impact(suggestions)
-    
-    for impact_level in ["High Impact", "Medium Impact", "Low Impact"]:
-        suggestions_list = categorized.get(impact_level, [])
-        if suggestions_list:
-            story.append(Paragraph(f"{impact_level} (Quick Wins)", styles['Heading3']))
-            
-            for sugg in suggestions_list[:5]:  # Top 5 per category
-                title = sugg.get("title", "N/A")
-                description = sugg.get("description", "N/A")
-                savings = sugg.get("savings_percentage", 0)
-                payback = sugg.get("payback_months", 999)
-                investment = sugg.get("investment", 0)
-                
-                sugg_text = f"<b>{title}</b><br/>"
-                sugg_text += f"Savings: {savings:.0f}% reduction | Investment: ${investment:,.0f} | Payback: {payback:.1f} months<br/>"
-                sugg_text += f"{description}"
-                
-                story.append(Paragraph(sugg_text, styles['Normal']))
-                story.append(Spacer(1, 0.1*inch))
-            
-            story.append(Spacer(1, 0.1*inch))
-    
     # ROI Summary
     story.append(PageBreak())
     story.append(Paragraph("ROI Analysis & Investment Summary", heading_style))
@@ -329,13 +277,14 @@ def generate_pdf_report(
     total_investment = sum(calculate_roi(s)["investment"] for s in suggestions)
     total_annual_savings = sum(calculate_roi(s)["annual_savings"] for s in suggestions)
     total_payback_months = (total_investment / total_annual_savings * 12) if total_annual_savings > 0 else 999
+    total_roi_3year = (((total_annual_savings * 3 - total_investment) / total_investment * 100) if total_investment > 0 else 0)
     
     roi_summary = [
         ["Investment Metric", "Value"],
         ["Total Investment Required", f"${total_investment:,.0f}"],
         ["Total Annual Savings", f"${total_annual_savings:,.0f}"],
         ["Payback Period", f"{total_payback_months:.1f} months ({total_payback_months/12:.1f} years)"],
-        ["3-Year ROI", f"{((total_annual_savings * 3 - total_investment) / total_investment * 100):.0f}%"],
+        ["3-Year ROI", f"{total_roi_3year:.0f}%"],
     ]
     
     roi_table = Table(roi_summary, colWidths=[3*inch, 3*inch])

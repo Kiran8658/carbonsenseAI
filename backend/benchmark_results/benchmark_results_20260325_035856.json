@@ -1,0 +1,54 @@
+{
+  "timestamp": "2026-03-25T03:58:55.943241",
+  "benchmarks": {
+    "lstm_forecasting": {
+      "lstm_forecast": {
+        "status": "\u26a0\ufe0f SKIPPED",
+        "reason": "Service not available"
+      }
+    },
+    "anomaly_detection": {
+      "anomaly": {
+        "status": "\u26a0\ufe0f SKIPPED"
+      }
+    },
+    "scenario_simulation": {
+      "simulation": {
+        "status": "\u26a0\ufe0f SKIPPED"
+      }
+    },
+    "api_endpoints": {
+      "GET_/health": {
+        "name": "api_GET_/health",
+        "calls": 5,
+        "avg_time_ms": 2.3966312408447266,
+        "min_time_ms": 1.2857913970947266,
+        "max_time_ms": 6.595134735107422,
+        "total_time_ms": 11.983156204223633,
+        "avg_memory_mb": 0.296875,
+        "peak_memory_mb": 1.390625
+      },
+      "GET_/api/sectors": {
+        "name": "api_GET_/api/sectors",
+        "calls": 5,
+        "avg_time_ms": 1.4277935028076172,
+        "min_time_ms": 1.2707710266113281,
+        "max_time_ms": 1.6329288482666016,
+        "total_time_ms": 7.138967514038086,
+        "avg_memory_mb": 0.003125,
+        "peak_memory_mb": 0.015625
+      },
+      "POST_/api/calculate": {
+        "name": "api_POST_/api/calculate",
+        "calls": 5,
+        "avg_time_ms": 1.3645648956298828,
+        "min_time_ms": 1.0039806365966797,
+        "max_time_ms": 1.9409656524658203,
+        "total_time_ms": 6.822824478149414,
+        "avg_memory_mb": 0.0,
+        "peak_memory_mb": 0.0
+      }
+    }
+  },
+  "summary": []
+}
