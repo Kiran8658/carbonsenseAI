@@ -16,6 +16,7 @@ from pathlib import Path
 
 # Performance metrics tracker
 class BenchmarkMetrics:
+    
     def __init__(self, name: str):
         self.name = name
         self.timings = []
