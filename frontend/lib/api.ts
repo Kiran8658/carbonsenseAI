@@ -7,9 +7,9 @@ const getApiUrl = () => {
   }
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
-    return `http://${host}:8005`;
+    return `http://${host}:8002`;
   }
-  return "http://localhost:8005";
+  return "http://localhost:8002";
 };
 
 const API_URL = getApiUrl();
